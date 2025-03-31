@@ -34,10 +34,11 @@ export async function POST(request: NextRequest) {
   try {
     const { db } = await connectToDatabase();
     ;
-    const { quizId, studentName, answers, focusLossCount, timeUsed } = await request.json() as {
+    const { quizId, studentName, answers, focusLossCount,submissionReason, timeUsed } = await request.json() as {
       quizId: string;
       studentName: string;
       answers: QuizAnswers;
+      submissionReason : string;
       focusLossCount: number;
       timeUsed: number;
     };

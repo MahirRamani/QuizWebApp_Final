@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { 
@@ -13,7 +13,6 @@ import {
   Eye
 } from 'lucide-react';
 import { Question, Option } from '@/types/quiz';
-import React from 'react';
 
 export default function QuizSession({ params }: { params: Promise<{ code: string }> }) {
   const router = useRouter();
@@ -29,11 +28,8 @@ export default function QuizSession({ params }: { params: Promise<{ code: string
   const [quizStatus, setQuizStatus] = useState<'loading' | 'waiting' | 'active' | 'completed' | 'error'>('loading');
   const [error, setError] = useState<string | null>(null);
   const [flaggedQuestions, setFlaggedQuestions] = useState<Set<number>>(new Set());
-  const [isFocused, setIsFocused] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [results, setResults] = useState<any>(null);
-  const [showSubmitMessage, setShowSubmitMessage] = useState(false);
-  const [submitReason, setSubmitReason] = useState<string>('');
   
   const timerRef = useRef<NodeJS.Timeout | null>(null);
   const blurCount = useRef(0);
@@ -44,8 +40,7 @@ export default function QuizSession({ params }: { params: Promise<{ code: string
     fetchQuizData();
 
     // Set up blur detection
-    window.addEventListener('blur', ( ) => {submitQuiz('blur')});
-    window.addEventListener('focus', handleWindowFocus);
+    window.addEventListener('blur', handleWindowBlur);
     
     // Prevent right-click
     document.addEventListener('contextmenu', preventRightClick);
@@ -66,14 +61,13 @@ export default function QuizSession({ params }: { params: Promise<{ code: string
     // Check devtools on interval
     const devToolsInterval = setInterval(devToolsDetector, 1000);
     
-    // return () => {
-    //   if (timerRef.current) clearInterval(timerRef.current);
-    //   window.removeEventListener('blur', handleWindowBlur);
-    //   window.removeEventListener('focus', handleWindowFocus);
-    //   window.removeEventListener('resize', devToolsDetector);
-    //   document.removeEventListener('contextmenu', preventRightClick);
-    //   clearInterval(devToolsInterval);
-    // };
+    return () => {
+      if (timerRef.current) clearInterval(timerRef.current);
+      window.removeEventListener('blur', handleWindowBlur);
+      window.removeEventListener('resize', devToolsDetector);
+      document.removeEventListener('contextmenu', preventRightClick);
+      clearInterval(devToolsInterval);
+    };
   }, [joinCode]);
 
   const preventRightClick = (e: MouseEvent) => {
@@ -81,75 +75,18 @@ export default function QuizSession({ params }: { params: Promise<{ code: string
     return false;
   };
 
-  const handleWindowBlur = async() => {
-
-    // alert("window blur");
-    console.log("window blur");
-    
-    if (isSubmittingRef.current) return;
-    
-    isSubmittingRef.current = true;
-    setIsSubmitting(true);
-    
-    // Clean up timers
-    if (timerRef.current) clearInterval(timerRef.current);
-    
-    try {
-      const response = await fetch('/api/quiz-submission', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          quizId: quiz._id,
-          studentName,
-          answers,
-          focusLossCount: blurCount.current,
-          timeUsed: quiz.timeLimit ? quiz.timeLimit - timeLeft : questions.reduce((sum, q) => sum + (q.timeLimit || 30), 0) - timeLeft,
-          submissionReason: 'blur',
-        }),
-      });
-      
-      if (!response.ok) {
-        throw new Error(`Failed to submit quiz: ${response.status}`);
-      }
-      
-      const resultData = await response.json();
-      setResults(resultData);
-      setQuizStatus('completed');
-      
-    } catch (error) {
-      console.error('Failed to submit quiz:', error);
-      setError('Failed to submit quiz. Please try again.');
-    } finally {
-      setIsSubmitting(false);
-      isSubmittingRef.current = false;
-    }
-
-    // await submitQuiz('blur');
-    setIsFocused(false);
+  const handleWindowBlur = () => {
     blurCount.current += 1;
     logFocusEvent('blur');
     
-    // Auto-submit the quiz when tab changes
+    // Auto-submit the quiz when tab changes immediately
     if (quizStatus === 'active' && !isSubmittingRef.current) {
-      setSubmitReason('You left the quiz window. Quiz has been automatically submitted.');
-      setShowSubmitMessage(true);
-      // setResults(resultData);
       submitQuiz('tab_change');
     }
   };
 
-  const handleWindowFocus = () => {
-    setIsFocused(true);
-    submitQuiz('manual');
-    logFocusEvent('focus');
-  };
-
   const handleDevToolsOpen = () => {
     if (quizStatus === 'active' && !isSubmittingRef.current) {
-      setSubmitReason('Developer tools were detected. Quiz has been automatically submitted.');
-      setShowSubmitMessage(true);
       submitQuiz('dev_tools');
     }
   };
@@ -177,8 +114,6 @@ export default function QuizSession({ params }: { params: Promise<{ code: string
     setQuizStatus('loading');
     
     try {
-      console.log("join code frontend", joinCode);
-      
       const response = await fetch(`/api/quizzes/join/${joinCode.code}`);
       
       if (!response.ok) {
@@ -231,8 +166,6 @@ export default function QuizSession({ params }: { params: Promise<{ code: string
         if (prev <= 1) {
           // Time's up - submit the quiz
           if (timerRef.current) clearInterval(timerRef.current);
-          setSubmitReason('Time is up. Quiz has been automatically submitted.');
-          setShowSubmitMessage(true);
           submitQuiz('time_up');
           return 0;
         }
@@ -352,10 +285,6 @@ export default function QuizSession({ params }: { params: Promise<{ code: string
     return Math.round((answeredCount / totalQuestions) * 100);
   };
 
-  const closeSubmitMessage = () => {
-    setShowSubmitMessage(false);
-  };
-
   if (quizStatus === 'loading') {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
@@ -434,6 +363,18 @@ export default function QuizSession({ params }: { params: Promise<{ code: string
             </div>
           </div>
 
+          {/* Display submission reason if it's not a manual submission */}
+          {results.submissionReason && results.submissionReason !== 'manual' && (
+            <div className="mb-6 p-4 bg-amber-50 border border-amber-200 rounded-lg">
+              <h3 className="font-semibold text-amber-800 mb-2">Submission Information</h3>
+              <p className="text-amber-700">
+                {results.submissionReason === 'time_up' && 'Quiz was submitted automatically because time ran out.'}
+                {results.submissionReason === 'tab_change' && 'Quiz was submitted automatically because you navigated away from the quiz window.'}
+                {results.submissionReason === 'dev_tools' && 'Quiz was submitted automatically because developer tools were detected.'}
+              </p>
+            </div>
+          )}
+
           <div className="flex justify-between">
             <Button onClick={() => router.push('/quiz/join')}>
               Join Another Quiz
@@ -463,35 +404,6 @@ export default function QuizSession({ params }: { params: Promise<{ code: string
 
   return (
     <div className="min-h-screen bg-gray-50 p-4">
-      {/* Auto-submit message modal */}
-      {showSubmitMessage && (
-        <div className="fixed inset-0 bg-black bg-opacity-80 flex items-center justify-center z-50">
-          <div className="bg-white p-6 rounded-lg max-w-md text-center">
-            <AlertCircle className="h-12 w-12 text-amber-500 mx-auto mb-4" />
-            <h2 className="text-xl font-bold mb-2">Quiz Submitted</h2>
-            <p className="mb-4">
-              {submitReason}
-            </p>
-            <Button onClick={closeSubmitMessage}>Close</Button>
-          </div>
-        </div>
-      )}
-
-      {/* Tab change warning */}
-      {!isFocused && !showSubmitMessage && (
-        <div className="fixed inset-0 bg-black bg-opacity-80 flex items-center justify-center z-50">
-          <div className="bg-white p-6 rounded-lg max-w-md text-center">
-            <AlertCircle className="h-12 w-12 text-red-500 mx-auto mb-4" />
-            <h2 className="text-xl font-bold mb-2">Warning: Focus Lost</h2>
-            <p className="mb-4">
-              You've left the quiz window. This may be considered cheating.
-              The quiz will be automatically submitted if you leave again.
-            </p>
-            <Button onClick={() => setIsFocused(true)}>Return to Quiz</Button>
-          </div>
-        </div>
-      )}
-
       <div className="max-w-4xl mx-auto">
         {/* Header with timer and progress */}
         <div className="bg-white rounded-lg shadow-sm p-4 mb-4 flex justify-between items-center">
